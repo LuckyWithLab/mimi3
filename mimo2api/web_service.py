@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 import uvicorn
 
 # 引入 Manager 长驻协程任务
-from manager import start_manager_tasks
+from .manager import start_manager_tasks
 
 # 配置基础日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
