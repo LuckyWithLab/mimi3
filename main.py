@@ -14,7 +14,6 @@ import uvicorn
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8000
 
-# 内网(Claw)环境要求连回来的公网穿透访问 WS 地址。请随你的 frp/ngrok/隧道 变更而修改！
 WS_TUNNEL_URL = f"ws://your-domain.com:{SERVER_PORT}/ws"
 # ================================================
 

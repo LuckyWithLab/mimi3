@@ -286,7 +286,7 @@ class NativeClawClient:
 # ----------------- 单账号并发管理器 -----------------
 
 class AccountManager:
-    def __init__(self, uid, user_info):
+    def __init__(self, uid, user_info, stagger_offset=0):
         self.uid = uid
         self.user_info = user_info
         self.ph = user_info.get("xiaomichatbot_ph", "")
@@ -297,6 +297,8 @@ class AccountManager:
         }
         self.name = user_info.get("name", self.uid)
         self.logger = logging.getLogger(f"Acc-{self.name}")
+        self.stagger_offset = stagger_offset
+        self.is_first_round = True
 
     async def get_instance_status(self) -> tuple[str, int]:
         """获取当前容器的状态和剩余时间(秒)"""
@@ -355,6 +357,9 @@ class AccountManager:
                         await client.close()
                         
                         wait_time = remain_sec - 120
+                        if self.is_first_round and self.stagger_offset > 0:
+                            wait_time = max(60, wait_time - self.stagger_offset)
+                            self.is_first_round = False
                         self.logger.info(f"容器直接复用成功！等待休眠 {wait_time} 秒直至其快过期时再触发完整的强制重建...")
                         await asyncio.sleep(wait_time)
                         continue
@@ -413,6 +418,10 @@ class AccountManager:
 
                 # 6. 此刻服务会去连接 public gateway websocket，本地挂起 55分钟
                 wait_time = 55 * 60
+                if self.is_first_round and self.stagger_offset > 0:
+                    wait_time = max(60, wait_time - self.stagger_offset)
+                    self.is_first_round = False
+                    
                 self.logger.info(f"注入已完成落地！本地守护任务挂起休眠 {wait_time} 秒...")
                 
                 # 关闭本地 ws，释放本地请求负荷，让内网 bridge 持续长留工作
@@ -438,10 +447,21 @@ async def start_manager_tasks():
     logger.info(f"共通过 users/ 扫描并成功重载入 {len(users)} 个授权用户预设账号。")
     tasks = []
     
-    # 全部取消顺延限流，由于已确认不再受 401 封锁，我们可以更加高效率并发启动集群实例。
-    for uid, user_info in users.items():
-        manager = AccountManager(uid, user_info)
-        t = asyncio.create_task(manager.run_lifecycle())
+    # 为了避免所有账号同时进入强制销毁重建期导致空窗，引入 stagger 错峰分配策略
+    total_users = len(users)
+    max_stagger_window = 50 * 60 # 分摊在 50 分钟内
+    stagger_step = max_stagger_window // total_users if total_users > 1 else 0
+
+    async def _delayed_start(mgr, init_sleep):
+        if init_sleep > 0:
+            await asyncio.sleep(init_sleep)
+        await mgr.run_lifecycle()
+
+    for i, (uid, user_info) in enumerate(users.items()):
+        stagger_offset = i * stagger_step
+        manager = AccountManager(uid, user_info, stagger_offset=stagger_offset)
+        # 初始启动小幅错开 3 秒，避免并发导致 API 短期拒绝
+        t = asyncio.create_task(_delayed_start(manager, i * 3.0))
         tasks.append(t)
     
     await asyncio.gather(*tasks, return_exceptions=True)

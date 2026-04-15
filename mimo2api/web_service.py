@@ -30,14 +30,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 全局状态
-class GatewayState:
-    def __init__(self):
-        self.active_clients: List[WebSocket] = []
-        self.pending_queues: Dict[str, asyncio.Queue] = {}
-        self.current_client_index: int = 0
+# 全局状态从 gateway_state 引入
+from .gateway_state import state
 
-state = GatewayState()
+# 注入前面拆分出的 WebUI 独立路由
+from .ui_router import router as ui_router
+app.include_router(ui_router)
 
 @app.websocket("/ws")
 async def ws_tunnel(ws: WebSocket):
@@ -69,81 +67,6 @@ async def ws_tunnel(ws: WebSocket):
             state.active_clients.remove(ws)
             logger.info(f"当前在线节点数: {len(state.active_clients)}")
 
-# ================= Web UI API Endpoints =================
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-USERS_DIR = os.path.join(ROOT_DIR, "users")
-
-@app.get("/webui")
-async def webui_page():
-    ui_path = os.path.join(os.path.dirname(__file__), "webui.html")
-    if os.path.exists(ui_path):
-        with open(ui_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return Response("webui.html not found", status_code=404)
-
-@app.get("/api/system/status")
-async def api_status():
-    return JSONResponse({"active_clients": len(state.active_clients)})
-
-@app.get("/api/users/list")
-async def api_users_list():
-    users = []
-    if os.path.exists(USERS_DIR):
-        for fn in os.listdir(USERS_DIR):
-            if fn.startswith("user_") and fn.endswith(".json"):
-                try:
-                    with open(os.path.join(USERS_DIR, fn), "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        users.append({
-                            "userId": data.get("userId"),
-                            "name": data.get("name"),
-                            "serviceToken": data.get("serviceToken")
-                        })
-                except:
-                    pass
-    return JSONResponse({"users": users})
-
-@app.post("/api/users/add")
-async def api_users_add(request: Request):
-    try:
-        body = await request.json()
-        raw_text = body.get("raw_text", "")
-        # 解析正则提取 (自动去引号和分号)
-        parsed = {}
-        for match in re.finditer(r'([a-zA-Z0-9_]+)="?([^;"]+)"?', raw_text):
-            parsed[match.group(1)] = match.group(2)
-            
-        uid = parsed.get("userId")
-        st = parsed.get("serviceToken")
-        ph = parsed.get("xiaomichatbot_ph")
-        
-        if not uid or not st or not ph:
-            return JSONResponse({"detail": "缺少必要字段 userId, serviceToken 或 xiaomichatbot_ph"}, status_code=400)
-            
-        os.makedirs(USERS_DIR, exist_ok=True)
-        target_file = os.path.join(USERS_DIR, f"user_{uid}.json")
-        
-        user_data = {
-            "userId": uid,
-            "serviceToken": st,
-            "xiaomichatbot_ph": ph,
-            "name": f"Imported_{uid}"
-        }
-        with open(target_file, "w", encoding="utf-8") as f:
-            json.dump(user_data, f, ensure_ascii=False, indent=2)
-            
-        return JSONResponse({"status": "ok", "userId": uid})
-    except Exception as e:
-        return JSONResponse({"detail": str(e)}, status_code=500)
-
-@app.delete("/api/users/delete/{uid}")
-async def api_users_delete(uid: str):
-    target_file = os.path.join(USERS_DIR, f"user_{uid}.json")
-    if os.path.exists(target_file):
-        os.remove(target_file)
-        return JSONResponse({"status": "ok"})
-    return JSONResponse({"detail": "User not found"}, status_code=404)
-# ==========================================================
 
 # 轮询获取下一个可用的客户端
 def get_next_client() -> WebSocket | None:
