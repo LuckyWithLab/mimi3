@@ -74,6 +74,19 @@ def get_next_client() -> WebSocket | None:
     state.current_client_index = (state.current_client_index + 1) % len(state.active_clients)
     return state.active_clients[state.current_client_index]
 
+@app.get("/v1/models")
+async def get_models():
+    models = [
+        "mimo-v2-pro",
+        "mimo-v2-flash",
+        "mimo-v2-omni",
+        "mimo-v2-tts"
+    ]
+    return JSONResponse(content={
+        "object": "list",
+        "data": [{"id": m, "object": "model", "created": 1700000000, "owned_by": "mimo"} for m in models]
+    })
+
 @app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def http_handler(request: Request, path: str):
     if not state.active_clients:
