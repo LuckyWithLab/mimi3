@@ -370,14 +370,41 @@ async def get_models():
         })
     return JSONResponse(content={"object": "list", "data": data})
 
+@app.get("/anthropic/v1/models")
+async def get_anthropic_models():
+    models = [
+        {"id": "mimo-v2-pro", "display_name": "MiMo V2 Pro", "model_context": 1000000},
+        {"id": "mimo-v2-flash", "display_name": "MiMo V2 Flash", "model_context": 256000},
+        {"id": "mimo-v2-omni", "display_name": "MiMo V2 Omni", "model_context": 256000},
+    ]
+    data = [
+        {
+            "id": m["id"], 
+            "display_name": m["display_name"], 
+            "created_at": "2025-01-01T00:00:00Z", 
+            "type": "model", 
+            "max_input_tokens": m["model_context"], 
+            "max_tokens": m["model_context"],
+        } for m in models
+    ]
+    return JSONResponse(content={"data": data, "has_more": False, "first_id": data[0]["id"], "last_id": data[-1]["id"]})
+
 @app.api_route("/v1/chat/completions", methods=["GET", "POST", "PUT", "DELETE"])
-async def http_handler(request: Request):
+async def chat_completions_handler(request: Request):
+    return await _forward_request(request, "/v1/chat/completions")
+
+@app.api_route("/anthropic/v1/messages", methods=["GET", "POST", "PUT", "DELETE"])
+async def anthropic_messages_handler(request: Request):
+    return await _forward_request(request, "/anthropic/v1/messages")
+
+async def _forward_request(request: Request, path: str):
+    """通用请求转发：将 HTTP 请求通过 WS 透传给内网节点。"""
     if not state.active_clients:
         return Response("Gateway Error: 没有可用的内网节点", status_code=503)
 
     body = await request.body()
     method = request.method
-    
+
     max_retries = len(state.active_clients)
     if max_retries == 0:
         return Response("Gateway Error: 没有可用的内网节点", status_code=503)
@@ -393,7 +420,7 @@ async def http_handler(request: Request):
         ws_payload = json.dumps({
             "req_id": req_id,
             "method": method,
-            "path": "/v1/chat/completions",
+            "path": path,
             "body": body.decode("utf-8", "ignore")
         })
 
@@ -401,10 +428,10 @@ async def http_handler(request: Request):
         if not target_ws:
             state.pending_queues.pop(req_id, None)
             break
-            
+
         try:
             await target_ws.send_text(ws_payload)
-            logger.info(f"👉 转发请求 [{req_id[:8]}] ({method} /v1/chat/completions) -> 节点: {target_ws.client.host if target_ws.client else 'Unknown'} (尝试 {attempt + 1}/{max_retries})")
+            logger.info(f"👉 转发请求 [{req_id[:8]}] ({method} {path}) -> 节点: {target_ws.client.host if target_ws.client else 'Unknown'} (尝试 {attempt + 1}/{max_retries})")
         except RuntimeError:
             logger.warning(f"⚠️ 转发失败，节点状态异常，尝试切换...")
             if target_ws in state.active_clients:
