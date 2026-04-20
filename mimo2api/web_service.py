@@ -13,7 +13,7 @@ import os
 import re
 
 # 引入 Manager 长驻协程任务
-from .manager import start_manager_tasks
+from .manager import start_manager_tasks, trigger_rebuild
 
 # 配置基础日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -38,6 +38,13 @@ from .gateway_state import state
 # 注入前面拆分出的 WebUI 独立路由
 from .ui_router import router as ui_router
 app.include_router(ui_router)
+
+@app.post("/api/rebuild")
+async def api_rebuild():
+    """手动触发所有 Claw 节点强制销毁重建（用于更新 bridge.py 等场景）"""
+    trigger_rebuild()
+    logger.info("🔔 手动重建信号已发送")
+    return JSONResponse(content={"ok": True, "message": "重建信号已发送，所有节点将在当前循环结束后立即重建"})
 
 @app.websocket("/ws")
 async def ws_tunnel(ws: WebSocket):

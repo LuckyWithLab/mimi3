@@ -20,6 +20,20 @@ from urllib.parse import quote
 import httpx
 import websockets
 
+# 手动重建信号
+rebuild_event = asyncio.Event()
+
+async def interruptible_sleep(seconds: int):
+    """可被 rebuild_event 打断的 sleep"""
+    try:
+        await asyncio.wait_for(rebuild_event.wait(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
+
+def trigger_rebuild():
+    """供外部调用，触发所有账号强制重建"""
+    rebuild_event.set()
+
 # 配置日志格式
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s")
 logger = logging.getLogger("Manager")
@@ -361,7 +375,10 @@ class AccountManager:
                             wait_time = max(60, wait_time - self.stagger_offset)
                             self.is_first_round = False
                         self.logger.info(f"容器直接复用成功！等待休眠 {wait_time} 秒直至其快过期时再触发完整的强制重建...")
-                        await asyncio.sleep(wait_time)
+                        await interruptible_sleep(wait_time)
+                        if rebuild_event.is_set():
+                            self.logger.info("🔔 收到手动重建信号，立即销毁重建！")
+                            rebuild_event.clear()
                         continue
                     else:
                         self.logger.warning("虽然状态显示 AVAILABLE，但免重建重连失败！继续走全量摧毁新建流程...")
@@ -426,7 +443,10 @@ class AccountManager:
                 
                 # 关闭本地 ws，释放本地请求负荷，让内网 bridge 持续长留工作
                 await client.close()
-                await asyncio.sleep(wait_time)
+                await interruptible_sleep(wait_time)
+                if rebuild_event.is_set():
+                    self.logger.info("🔔 收到手动重建信号，立即销毁重建！")
+                    rebuild_event.clear()
 
             except asyncio.CancelledError:
                 await client.close()
