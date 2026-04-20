@@ -1,7 +1,7 @@
 import asyncio, websockets, httpx, json, os
 
 KEY = os.getenv("MIMO_API_KEY")
-URL = os.getenv("MIMO_API_ENDPOINT")
+BASE_URL = os.getenv("MIMO_API_ENDPOINT").rstrip("/")
 WS_URL = "__WS_URL__"
 
 async def handle_request(ws, req):
@@ -10,7 +10,7 @@ async def handle_request(ws, req):
         try:
             async with client.stream(
                 method=req["method"], 
-                url=URL, 
+                url=f"{BASE_URL}{req['path']}", 
                 headers={"api-key": KEY, "Content-Type": "application/json"}, 
                 content=req.get("body", "")
             ) as r:
