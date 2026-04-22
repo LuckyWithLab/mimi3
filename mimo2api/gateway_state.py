@@ -8,5 +8,6 @@ class GatewayState:
         self.pending_queues: Dict[str, asyncio.Queue] = {}
         self.current_client_index: int = 0
         self.rebuild_event: asyncio.Event = asyncio.Event()
+        self.client_cooldowns: Dict[int, float] = {}
 
 state = GatewayState()
