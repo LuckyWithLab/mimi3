@@ -495,7 +495,7 @@ async def audio_speech_handler(payload: AudioSpeechRequest):
 async def get_models():
     models_context = {
         "mimo-v2.5-pro": 1048576,
-        "mimo-v2.5": 256000,
+        "mimo-v2.5": 1048576,
         "mimo-v2.5-tts": 8192,
         "mimo-v2-pro": 1048576,
         "mimo-v2-flash": 256000,
@@ -519,18 +519,24 @@ async def get_models():
 @app.get("/anthropic/v1/models")
 async def get_anthropic_models():
     models = [
-        {"id": "mimo-v2-pro", "display_name": "MiMo V2 Pro", "model_context": 1000000},
-        {"id": "mimo-v2-flash", "display_name": "MiMo V2 Flash", "model_context": 256000},
-        {"id": "mimo-v2-omni", "display_name": "MiMo V2 Omni", "model_context": 256000},
+        {"id": "mimo-v2.5-pro", "display_name": "MiMo V2.5 Pro", "model_context": 1048576, "max_output": 131072},
+        {"id": "mimo-v2.5", "display_name": "MiMo V2.5", "model_context": 1048576, "max_output": 131072},
+        {"id": "mimo-v2.5-tts", "display_name": "MiMo V2.5 TTS", "model_context": 8192, "max_output": 8192},
+        {"id": "mimo-v2-pro", "display_name": "MiMo V2 Pro", "model_context": 1048576, "max_output": 131072},
+        {"id": "mimo-v2-flash", "display_name": "MiMo V2 Flash", "model_context": 256000, "max_output": 131072},
+        {"id": "mimo-v2-omni", "display_name": "MiMo V2 Omni", "model_context": 256000, "max_output": 131072},
+        {"id": "mimo-v2.5-tts-voicedesign", "display_name": "MiMo V2.5 TTS VoiceDesign", "model_context": 8192, "max_output": 8192},
+        {"id": "mimo-v2.5-tts-voiceclone", "display_name": "MiMo V2.5 TTS VoiceClone", "model_context": 8192, "max_output": 8192},
+        {"id": "mimo-v2-tts", "display_name": "MiMo V2 TTS", "model_context": 8192, "max_output": 8192},
     ]
     data = [
         {
-            "id": m["id"], 
-            "display_name": m["display_name"], 
-            "created_at": "2025-01-01T00:00:00Z", 
-            "type": "model", 
-            "max_input_tokens": m["model_context"], 
-            "max_tokens": m["model_context"],
+            "id": m["id"],
+            "display_name": m["display_name"],
+            "created_at": "2025-01-01T00:00:00Z",
+            "type": "model",
+            "max_input_tokens": m["model_context"],
+            "max_tokens": m["max_output"],
         } for m in models
     ]
     return JSONResponse(content={"data": data, "has_more": False, "first_id": data[0]["id"], "last_id": data[-1]["id"]})
