@@ -44,6 +44,7 @@ app.include_router(ui_router)
 RETRYABLE_STATUS_CODES = {401, 403, 429}
 NODE_RESPONSE_TIMEOUT = 30
 STREAM_CHUNK_TIMEOUT = 120
+STREAM_KEEPALIVE_INTERVAL = 25  # 秒，需小于 Cloudflare 超时 (~100s)
 QUEUE_DRAIN_TIMEOUT = 5
 DEFAULT_GATEWAY_ERROR = "Gateway Error: 所有节点请求失败"
 NODE_401_COOLDOWN_SECONDS = int(os.getenv("MIMO_NODE_401_COOLDOWN_SECONDS", "900"))
@@ -478,9 +479,9 @@ async def audio_speech_handler(payload: AudioSpeechRequest):
             return Response(audio_bytes, media_type=audio_media_type(final_format))
 
         except asyncio.TimeoutError:
-            logger.error(f"⚠️ TTS 请求等待内网节点超时 (600s) [{req_id[:8]}]，尝试切换...")
+            logger.error(f"⚠️ TTS 请求等待内网节点超时 (30s) [{req_id[:8]}]，尝试切换...")
             retry_state.status_code = 504
-            retry_state.response_text = "Gateway Error: 请求内网节点超时 (600s)"
+            retry_state.response_text = "Gateway Error: 请求内网节点超时 (30s)"
             cleanup_pending_request(req_id)
             continue
         except RuntimeError as exc:
@@ -564,6 +565,12 @@ async def _forward_request(request: Request, path: str):
     retry_state = RetryState()
     body_text = body.decode("utf-8", "ignore")
 
+    is_streaming = False
+    try:
+        is_streaming = json.loads(body_text).get("stream", False) is True
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
     for attempt in range(max_retries):
         req_id = "unknown"
         try:
@@ -585,33 +592,54 @@ async def _forward_request(request: Request, path: str):
             content_type, response_headers = normalize_response_headers(first_msg.get("headers", {}))
 
             # 构造流式生成器，边收 WS 数据边吐给外部 HTTP
-            async def stream_generator(current_req_id, current_queue):
+            async def stream_generator(current_req_id, current_queue, use_keepalive):
+                async def _keepalive():
+                    while True:
+                        await asyncio.sleep(STREAM_KEEPALIVE_INTERVAL)
+                        yield b": keep-alive\n\n"
+
+                keepalive_task = asyncio.ensure_future(_keepalive().__anext__()) if use_keepalive else None
                 try:
                     while True:
-                        # 块与块之间的等待超时 (120秒)
-                        msg = await asyncio.wait_for(current_queue.get(), timeout=STREAM_CHUNK_TIMEOUT)
+                        pending = {asyncio.ensure_future(asyncio.wait_for(
+                            current_queue.get(), timeout=STREAM_CHUNK_TIMEOUT,
+                        ))}
+                        if keepalive_task is not None:
+                            pending.add(keepalive_task)
+                        done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        if keepalive_task is not None and keepalive_task in done:
+                            yield keepalive_task.result()
+                            keepalive_task = asyncio.ensure_future(_keepalive().__anext__())
+                            for t in done:
+                                if t is not keepalive_task:
+                                    t.cancel()
+                                    await asyncio.gather(t, return_exceptions=True)
+                            continue
+                        msg = done.pop().result()
                         if msg.get("type") == "finish":
                             break
                         elif msg.get("type") == "chunk":
                             yield msg.get("body", "").encode("utf-8")
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     logger.error(f"⚠️ 流式传输意外中断超时 [{current_req_id[:8]}]")
                 finally:
-                    # 传输结束，清理队列
+                    if keepalive_task is not None:
+                        keepalive_task.cancel()
+                        await asyncio.gather(keepalive_task, return_exceptions=True)
                     cleanup_pending_request(current_req_id)
 
             logger.info(f"👈 建立流式响应管道 [{req_id[:8]}] - 状态码: {status_code}")
             return StreamingResponse(
-                stream_generator(req_id, queue),
+                stream_generator(req_id, queue, use_keepalive=is_streaming),
                 status_code=status_code,
                 media_type=content_type,
                 headers=response_headers,
             )
             
         except asyncio.TimeoutError:
-            logger.error(f"⚠️ 请求等待内网节点超时 (600s) [{req_id[:8]}]，尝试切换...")
+            logger.error(f"⚠️ 请求等待内网节点超时 (30s) [{req_id[:8]}]，尝试切换...")
             retry_state.status_code = 504
-            retry_state.response_text = "Gateway Error: 请求内网节点超时 (600s)"
+            retry_state.response_text = "Gateway Error: 请求所有节点超时 (30s)"
             cleanup_pending_request(req_id)
             continue
 

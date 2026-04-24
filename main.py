@@ -8,17 +8,16 @@ import os
 import sys
 import logging
 import uvicorn
+from dotenv import load_dotenv
 
-# ================= 统一全局配置 =================
-# 本地网关绑定的物理IP与端口
-SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 8000
+load_dotenv()
 
-WS_TUNNEL_URL = f"ws://your-domain.com:{SERVER_PORT}/ws"
+# ================= 统一全局配置（优先读 .env，有默认值兜底） =================
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
+WS_TUNNEL_URL = os.getenv("WS_TUNNEL_URL", f"ws://your-domain.com:{SERVER_PORT}/ws")
 # ================================================
 
-
-# 注入环境变量，让系统下面的 mimo2api/manager.py 层能读取到并替换进代码文本
 os.environ["MIMO2API_WS_URL"] = WS_TUNNEL_URL
 
 # 引入实际带 Lifespan 背景挂载服务的 FastAPI APP 对象
