@@ -22,7 +22,7 @@ class ChatToolCall(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant", "tool"]
+    role: Literal["system", "user", "assistant", "tool", "developer"]
     content: Union[str, list[dict[str, Any]], None] = None
     name: Optional[str] = None
     tool_calls: Optional[list[ChatToolCall]] = None
@@ -42,7 +42,7 @@ class ChatRequest(BaseModel):
 class RespMessageItem(BaseModel):
     type: Literal["message"] = "message"
     id: str = Field(default_factory=lambda: _generate_id("msg"))
-    role: Literal["system", "user", "assistant"] = "user"
+    role: Literal["system", "user", "assistant", "developer"] = "user"
     content: Union[str, list[Any]] = Field(default_factory=list)
     status: Optional[str] = None
 
@@ -190,7 +190,7 @@ def convert_response(chat_resp: dict[str, Any]) -> dict[str, Any]:
             content=content_parts
         ))
 
-    for tc in message.get("tool_calls", []):
+    for tc in (message.get("tool_calls") or []):
         func = tc.get("function", {})
         output_items.append(RespFunctionCallItem(
             call_id=tc.get("id", ""),
@@ -302,7 +302,7 @@ class ResponsesStreamConverter:
             self._text_buf += content
             yield _sse_event("response.output_text.delta", {"output_index": self._text_out_idx, "content_index": 0, "delta": content})
 
-        for tc in delta.get("tool_calls", []):
+        for tc in (delta.get("tool_calls") or []):
             yield from self._handle_tool_call_delta(tc)
 
     def _handle_tool_call_delta(self, tc: dict[str, Any]) -> Iterator[str]:
